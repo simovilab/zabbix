@@ -1,0 +1,157 @@
+version: "3.9"
+
+############################
+# VOLUMENES
+############################
+volumes:
+  zabbix-postgresdb:
+  zabbix-server:
+  zabbix-snmptraps:
+  zabbix_dashboard_config:
+  zabbix_certificados:
+
+############################
+# RED
+############################
+networks:
+  net0:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${SUBNET}
+          gateway: ${GATEWAY}
+
+############################
+# SERVICIOS
+############################
+services:
+  ###########################
+  # POSTGRES
+  ###########################
+  zabbix-postgres-bd:
+    image: postgres:17.6
+    container_name: zabbix-postgres-bd
+    restart: unless-stopped
+    networks:
+      net0:
+        ipv4_address: ${ZBX_DB_IP}
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - zabbix-postgresdb:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ###########################
+  # SNMP TRAPS
+  ###########################
+  zabbix-snmptraps:
+    image: zabbix/zabbix-snmptraps:latest
+    container_name: zabbix-snmptraps
+    restart: unless-stopped
+    networks:
+      net0:
+        ipv4_address: ${ZBX_TRAPS_IP}
+    ports:
+      - "162:1162/udp"
+    volumes:
+      - zabbix-snmptraps:/var/lib/zabbix/snmptraps:rw
+      - ./mibs:/usr/share/snmp/mibs:ro
+    #security_opt:
+    #  - seccomp=unconfined
+
+  ###########################
+  # ZABBIX SERVER
+  ###########################
+  zabbix-server-pgsql:
+    image: zabbix/zabbix-server-pgsql:latest
+    container_name: zabbix-server-pgsql
+    restart: unless-stopped
+    networks:
+      net0:
+        ipv4_address: ${ZBX_SERVER_IP}
+    depends_on:
+      zabbix-postgres-bd:
+        condition: service_healthy
+    environment:
+      - DB_SERVER_HOST=${ZBX_DB_IP}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - ZBX_ENABLE_SNMP_TRAPS=${ZBX_ENABLE_SNMP_TRAPS}
+    ports:
+      - "10051:10051"
+    volumes:
+      - zabbix-server:/var/lib/zabbix
+      - ./alertscripts:/usr/lib/zabbix/alertscripts:ro
+      - ./externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - zabbix-snmptraps:/var/lib/zabbix/snmptraps
+    #security_opt:
+    #  - seccomp=unconfined
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 5 bash -c 'cat < /dev/null > /dev/tcp/localhost/10051' || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ###########################
+  # ZABBIX WEB (NGINX)
+  ###########################
+  zabbix-dashboard:
+    image: zabbix/zabbix-web-nginx-pgsql:latest
+    container_name: zabbix-dashboard
+    restart: unless-stopped
+    networks:
+      net0:
+        ipv4_address: ${ZBX_DASHBOARD_IP}
+    depends_on:
+      zabbix-postgres-bd:
+        condition: service_healthy
+      zabbix-server-pgsql:
+        condition: service_healthy
+    environment:
+      - ZBX_SERVER_HOST=${ZBX_SERVER_IP}
+      - DB_SERVER_HOST=${ZBX_DB_IP}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PHP_TZ=${PHP_TZ}
+    ports:
+      - "${PORT_HTTPS}:8443"
+      - "${PORT_HTTP}:8080"
+    volumes:
+      - zabbix_certificados:/etc/ssl/nginx:ro
+      - zabbix_dashboard_config:/usr/share/zabbix
+    #security_opt:
+    #  - seccomp=unconfined
+
+  ##########################
+  # ZABBIX AGENT 2
+  ###########################
+  zabbix-agent2:
+    image: zabbix/zabbix-agent2:ubuntu-7.4.3
+    container_name: zabbix-agent2
+    restart: unless-stopped
+    networks:
+      net0:
+        ipv4_address: ${ZBX_AGENT2_IP}
+    user: "1001:996"
+    environment:
+      - ZBX_SERVER_HOST=${ZBX_SERVER_IP}
+      - ZBX_ACTIVE_ALLOW=${ZBX_ACTIVE_ALLOW}
+      - ZBX_HOSTNAME=${ZBX_HOSTNAME}
+      - ZBX_METADATA=${ZBX_METADATA}
+    volumes:
+      - /proc:/proc
+      - /sys:/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock
