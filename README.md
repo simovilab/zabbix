@@ -73,7 +73,32 @@ Incluye base de datos optimizada, servidor, interfaz web, SNMP traps y agente2 l
 
 ---
 
-## **2. Descargar o Clonar el repositorio**
+## **2. Se crea el usuario zabbix**
+
+Se debe crear un usuario en el host y luego agregarlo al grupo Docker para que el agente pueda leer las métricas y no tener que correrlo como root
+
+```bash
+useradd -r -s /bin/false -M -u 1001 zabbix-agente
+usermod -aG docker zabbix-agente
+```
+
+Se verifica:
+
+```bash
+id zabbix-agente
+groups zabbix-agente
+```
+
+Probamos que el usuario tena acceso al socket
+
+```bash
+sudo -u zabbix-agente docker version
+sudo -u zabbix-agente curl --unix-socket /var/run/docker.sock http://localhost/version
+```
+
+Debemos iniciar el contenedor del zabbix agente como usuario zabbix-agente=1001 y grupo Docker=996, 1001:996
+
+## **3. Descargar o Clonar el repositorio**
 
 ```bash
 wget https://github.com/rsol9000/zabbix-docker/archive/main.zip -O zabbix-stack.zip
@@ -87,7 +112,7 @@ cd zabbix-stack
 
 ---
 
-## **3. Configurar variables de entorno**
+## **4. Configurar variables de entorno**
 
 ```bash
 cp .env.pub .env
