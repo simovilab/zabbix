@@ -1,0 +1,212 @@
+# syntax=docker/dockerfile:1.6
+# escape=`
+ARG OS_BASE_IMAGE=mcr.microsoft.com/windows/servercore:ltsc2022
+
+ARG PCRE2_VERSION=10.47
+ARG OPENSSL_VERSION=3.5.4
+ARG GOLANG_VERSION=1.26.2
+ARG PWSH_VERSION=7.6.1
+
+ARG MSYSTEM=UCRT64
+
+ARG MAJOR_VERSION=7.4
+ARG ZBX_VERSION=${MAJOR_VERSION}.10
+
+FROM ${OS_BASE_IMAGE} as src
+
+ARG PCRE2_VERSION
+ARG OPENSSL_VERSION
+ARG GOLANG_VERSION
+ARG PWSH_VERSION
+
+ARG MSYSTEM
+
+ARG MINGW_URL=https://github.com/niXman/mingw-builds-binaries/releases/download/15.2.0-rt_v13-rev0/x86_64-15.2.0-release-win32-seh-ucrt-rt_v13-rev0.7z
+ARG GOLANG_URL=https://go.dev/dl/go$GOLANG_VERSION.windows-amd64.zip
+ARG MSYS2_URL=https://github.com/msys2/msys2-installer/releases/download/2025-12-13/msys2-base-x86_64-20251213.sfx.exe
+
+ARG PCRE2_URL=https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.zip
+ARG OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz
+
+ARG PWSH_URL=https://github.com/PowerShell/PowerShell/releases/download/v$PWSH_VERSION/PowerShell-$PWSH_VERSION-win-x64.zip
+
+ADD --checksum=sha256:B5C9E8457CA7DF4998ABE3CC2C58E6DD4005AD1B4C5320BBAC86244A747DB91D $PWSH_URL build_deps\pwsh.zip
+ADD --checksum=sha256:98eb3570bade15cb826b0909338df6cc6d2cf590bc39c471142002db3832b708 $GOLANG_URL build_deps\go_lang.zip
+ADD --checksum=sha256:9e9f0b912a59d2cfb3ce5a01bae4e7a05e4be4f8ff89e36e0f57606ec525525d $MINGW_URL build_deps\mingw.7z
+ADD --checksum=sha256:99f2fee9a7b1c344600ac97347e7be23a1f802d8d843b339ec7473a8ed8d49a6 $MSYS2_URL build_deps\msys2.sfx.exe
+
+ADD --checksum=sha256:d74c183c86c77248ad50017c7f45bae8f88106a6cca5d87ad09917e1c6fb0784 $PCRE2_URL build_src\pcre2.zip
+ADD --checksum=sha256:967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99 $OPENSSL_URL build_src\openssl.tar.gz
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+RUN $env:BUILD_SRC = [string]::Format('{0}\build_src', $env:SystemDrive); `
+    [Environment]::SetEnvironmentVariable('BUILD_SRC', $env:BUILD_SRC, [EnvironmentVariableTarget]::Machine); `
+    $env:BUILD_DEPS = [string]::Format('{0}\build_deps', $env:SystemDrive); `
+    [Environment]::SetEnvironmentVariable('BUILD_DEPS', $env:BUILD_DEPS, [EnvironmentVariableTarget]::Machine); `
+    $env:MSYS_BIN = [string]::Format('{0}\msys64\{1}\bin', $env:BUILD_DEPS, $env:MSYSTEM.ToLower()); `
+    [Environment]::SetEnvironmentVariable('MSYS_BIN', $env:MSYS_BIN, [EnvironmentVariableTarget]::Machine); `
+    `
+    $env:PATH = $env:PATH + [string]::Format(';{0}\mingw64\bin;{0}\go\bin;{0}\msys64\usr\bin', $env:BUILD_DEPS); `
+    [Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); `
+    `
+    Set-Location -Path $env:BUILD_DEPS; `
+    Write-Host 'Installing PowerShell...'; `
+    Expand-Archive `
+        -Path $env:BUILD_DEPS\pwsh.zip `
+        -DestinationPath $env:BUILD_DEPS\pwsh\.; `
+    Get-ChildItem -Path $env:BUILD_DEPS\pwsh -Directory | Where-Object { `
+        $_.Name -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hans|zh-Hant)$' `
+    } | Remove-Item -Recurse -Force; `
+    Get-ChildItem -Path $env:BUILD_DEPS\pwsh -Recurse -Include '*.xml' | Where-Object { $_.FullName -notmatch '\\en-US\\' } | Remove-Item -Force; `
+    Get-ChildItem -Path $env:BUILD_DEPS\pwsh -Recurse -Include '*.resources.dll' | Where-Object { $_.FullName -notmatch '\\en-US\\' } | Remove-Item -Force; `
+    `
+    Write-Host 'Installing MSYS2...'; `
+    & $env:BUILD_DEPS\msys2.sfx.exe -y -o"""$env:BUILD_DEPS\""" | Out-Null; `
+    function msys() { bash @('-lc') + @Args; }; `
+    msys """sed -i -E '/^\[(clangarm64|mingw32|mingw64|clang64)\]/,/^Include/ s/^[^#]/#&/' /etc/pacman.conf"""; `
+    msys 'pacman --noprogressbar --noconfirm -Syuu'; `
+    msys 'pacman --noprogressbar --noconfirm -Syuu'; `
+    msys 'pacman --noprogressbar --sync --quiet --noconfirm mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-7zip git'; `
+    msys 'pacman --noprogressbar --noconfirm -Scc'; `
+    msys 'rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/locale/*'; `
+    msys 'rm -rf /$MSYSTEM/usr/share/man/* /$MSYSTEM/usr/share/doc/* /$MSYSTEM/usr/share/locale/*'; `
+    msys 'rm -rf /$MSYSTEM/share/man/* /$MSYSTEM/share/doc/* /$MSYSTEM/share/locale/*'; `
+    msys 'rm -rf /var/cache/pacman/pkg/*'; `
+    taskkill /F /FI 'MODULES eq msys-2.0.dll' | Out-Null; `
+    compact /c /i /s:$env:BUILD_DEPS\msys64 | Out-Null; `
+    `
+    Write-Host 'Installing Mingw-w64...'; `
+    & $env:MSYS_BIN\7z.exe x $env:BUILD_DEPS\mingw.7z -bso0 -bsp0; `
+    compact /c /i /s:$env:BUILD_DEPS\mingw64 | Out-Null; `
+    `
+    Write-Host 'Installing Go Lang...'; `
+    Expand-Archive -Path $env:BUILD_DEPS\go_lang.zip -DestinationPath $env:BUILD_DEPS; `
+    `
+    Set-Location -Path $env:BUILD_SRC; `
+    `
+    Write-Host 'Extracting PCRE2 archive ...'; `
+    Expand-Archive -Path $env:BUILD_SRC\pcre2.zip -DestinationPath $env:BUILD_SRC; `
+    Rename-Item -Path $env:BUILD_SRC\pcre2-$env:PCRE2_VERSION -NewName $env:BUILD_SRC\pcre2; `
+    `
+    Write-Host 'Extracting OpenSSL archive ...'; `
+    $env:SystemDirectory = [Environment]::SystemDirectory; `
+    tar -zxf "$env:BUILD_SRC\openssl.tar.gz"; `
+    Rename-Item -Path $env:BUILD_SRC\openssl-$env:OPENSSL_VERSION -NewName $env:BUILD_SRC\openssl; `
+    Remove-Item -Recurse -Force $env:BUILD_SRC\openssl\test -ErrorAction SilentlyContinue; `
+    `
+    Write-Host 'Removing downloaded...'; `
+    Remove-Item -Force -Recurse $env:BUILD_SRC\*.tar.gz -ErrorAction SilentlyContinue; `
+    Remove-Item -Force -Recurse $env:BUILD_SRC\*.zip -ErrorAction SilentlyContinue; `
+    Remove-Item -Force -Recurse $env:BUILD_DEPS\*.tar.gz -ErrorAction SilentlyContinue; `
+    Remove-Item -Force -Recurse $env:BUILD_DEPS\*.zip -ErrorAction SilentlyContinue; `
+    Remove-Item -Force -Recurse $env:BUILD_DEPS\*.exe -ErrorAction SilentlyContinue; `
+    Remove-Item -Force -Recurse $env:BUILD_DEPS\*.7z -ErrorAction SilentlyContinue;
+
+FROM ${OS_BASE_IMAGE}
+
+ARG PCRE2_VERSION
+ARG OPENSSL_VERSION
+ARG GOLANG_VERSION
+
+ARG MSYSTEM
+
+ARG MAJOR_VERSION
+ARG ZBX_VERSION
+
+ENV ZBX_VERSION=$ZBX_VERSION `
+    GOLANG_VERSION=$GOLANG_VERSION `
+    PCRE2_VERSION=$PCRE2_VERSION OPENSSL_VERSION=$OPENSSL_VERSION `
+    CHERE_INVOKING=yes MSYSTEM=$MSYSTEM
+
+LABEL org.opencontainers.image.title="Zabbix agent 2 build base for Windows" `
+      org.opencontainers.image.authors="Alexey Pustovalov <alexey.pustovalov@zabbix.com>" `
+      org.opencontainers.image.vendor="Zabbix SIA" `
+      org.opencontainers.image.url="https://zabbix.com/" `
+      org.opencontainers.image.description="Zabbix build base image contains all required packages to build Zabbix agent 2 images" `
+      org.opencontainers.image.licenses="AGPL v3.0" `
+      org.opencontainers.image.documentation="https://www.zabbix.com/documentation/${MAJOR_VERSION}/manual/installation/containers" `
+      org.opencontainers.image.version="${ZBX_VERSION}"
+
+COPY --from=src build_src build_src
+COPY --from=src build_deps build_deps
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+RUN Set-Location -Path $env:SystemDrive\.; `
+    `
+    $env:BUILD_OUTPUT = [string]::Format('{0}\build_output', $env:SystemDrive); `
+    [Environment]::SetEnvironmentVariable('BUILD_OUTPUT', $env:BUILD_OUTPUT, [EnvironmentVariableTarget]::Machine); `
+    $env:BUILD_SRC = [string]::Format('{0}\build_src', $env:SystemDrive); `
+    [Environment]::SetEnvironmentVariable('BUILD_SRC', $env:BUILD_SRC, [EnvironmentVariableTarget]::Machine); `
+    $env:BUILD_DEPS = [string]::Format('{0}\build_deps', $env:SystemDrive); `
+    [Environment]::SetEnvironmentVariable('BUILD_DEPS', $env:BUILD_DEPS, [EnvironmentVariableTarget]::Machine); `
+    $env:MSYS_BIN = [string]::Format('{0}\msys64\{1}\bin', $env:BUILD_DEPS, $env:MSYSTEM.ToLower()); `
+    [Environment]::SetEnvironmentVariable('MSYS_BIN', $env:MSYS_BIN, [EnvironmentVariableTarget]::Machine); `
+    `
+    $env:PATH = $env:PATH + [string]::Format(';{0}\mingw64\bin;{0}\go\bin;{0}\msys64\usr\bin', $env:BUILD_DEPS); `
+    [Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); `
+    `
+    New-Item -ItemType directory -Path $env:BUILD_OUTPUT -Force | Out-Null; `
+    `
+    Write-Host 'Verifying install ("go version") ...'; `
+    go version; `
+    `
+    Write-Host 'Verifying install ("bash --version") ...'; `
+    bash --version; `
+    `
+    Write-Host 'Verifying install ("gcc -v") ...'; `
+    gcc -v; `
+    `
+    Write-Host 'Verifying install ("git -v") ...'; `
+    git --version; `
+    `
+    Write-Host 'Build environment is ready...';
+
+RUN Write-Host 'Building PCRE2 library ...'; `
+    Set-Location -Path $env:BUILD_SRC\pcre2; `
+    & $env:MSYS_BIN\cmake.exe -S $env:BUILD_SRC\pcre2 -B $env:BUILD_SRC\pcre2\build `
+        -G 'MinGW Makefiles' `
+        -DBUILD_SHARED_LIBS=OFF `
+        -DBUILD_STATIC_LIBS=ON `
+        -DPCRE2_DEBUG=OFF `
+        -DPCRE2_BUILD_TESTS=OFF `
+        -DPCRE2_BUILD_PCRE2GREP=OFF `
+        -DPCRE2_SUPPORT_JIT=OFF `
+        -DINSTALL_MSVC_PDB=OFF `
+        -DCMAKE_C_COMPILER="""$env:BUILD_DEPS\mingw64\bin\gcc.exe""" `
+        -DCMAKE_C_FLAGS='-O2 -g' `
+        -DCMAKE_INSTALL_PREFIX="""$env:BUILD_OUTPUT\pcre2""" . ; `
+    Set-Location -Path $env:BUILD_SRC\pcre2\build; `
+    mingw32-make -s -j"""$env:NUMBER_OF_PROCESSORS"""; `
+    mingw32-make -s -j"""$env:NUMBER_OF_PROCESSORS""" install; `
+    mingw32-make -s clean | Out-Null; `
+    Remove-Item -Recurse -Force -Path $env:BUILD_OUTPUT\pcre2\share -ErrorAction SilentlyContinue; `
+    Write-Host 'PCRE2 is ready...';
+
+RUN Write-Host 'Building OpenSSL library...'; `
+    Set-Location -Path $env:BUILD_SRC\openssl; `
+    $env:CFLAGS = """$env:CFLAGS -Wno-overflow""".Trim(); `
+    perl Configure `
+        mingw64 `
+        no-capieng `
+        no-docs `
+        no-dgram `
+        no-dtls1-method `
+        no-dtls1_2-method `
+        no-gost `
+        no-shared `
+        no-srp `
+        no-tests `
+        no-ui-console `
+        no-winstore `
+        thread_scheme=winthreads `
+        --api=1.1.0 `
+        --libdir=lib `
+        --prefix=$env:BUILD_OUTPUT/openssl `
+        --openssldir=$env:BUILD_OUTPUT/openssl_ssl; `
+    mingw32-make -s -j"""$env:NUMBER_OF_PROCESSORS""" build_libs; `
+    mingw32-make -s -j"""$env:NUMBER_OF_PROCESSORS""" install_dev; `
+    mingw32-make -s clean | Out-Null; `
+    Write-Host 'OpenSSL is ready...'; `
+    Write-Host 'Build environment is ready';
