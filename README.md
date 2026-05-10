@@ -148,3 +148,4 @@ Diagnostico:
 
     zabbix_get -s 192.168.100.8 -p 10050 -k system.hostname
 
+docker exec -it NOMBRE_CONTENEDOR mysql -uUSUARIO -pPASSWORD
