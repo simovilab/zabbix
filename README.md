@@ -127,8 +127,21 @@ Ejemplos:
 ### 🧮 Macro
 Variable reutilizable cuyo valor depende del contexto.
 
-Ejemplo:
 
+# Modulos:
+
+| Servicio | Función principal | Puerto |
+|---|---|---|
+| **Zabbix Server** `zabbix-server` | Núcleo central. Recopila datos, evalúa triggers y envía alertas. | 10051 (TCP) |
+| **Zabbix Agent** `zabbix-agent` | Se instala en el host monitorizado. Recolecta métricas del sistema. | 10050 (TCP) |
+| **Zabbix Agent 2** `zabbix-agent2` | Versión moderna (Go). Plugins, activo/pasivo, menor consumo de recursos. | 10050 (TCP) |
+| **Zabbix Proxy** `proxy-mysql / proxy-sqlite3` | Recopila datos en redes remotas y los reenvía al servidor central. | 10051 (TCP) |
+| **Java Gateway** `zabbix-java-gateway` | Pasarela para monitoreo JMX. Monitoriza apps Java/JBoss/Tomcat. | 10052 (TCP) |
+| **Web Service** `zabbix-web-service` | Generación de informes PDF usando un navegador headless (Chrome). | 10053 (TCP) |
+| **SNMP Traps** `zabbix-snmptraps` | Recibe traps SNMP de dispositivos de red (switches, routers, etc.). | 162 (UDP) |
+| **Frontend** `web-apache / web-nginx` | Interfaz web. Dashboards, configuración y visualización. | 80 / 443 |
+| **zabbix_sender** *(CLI)* | Herramienta para enviar datos al servidor/proxy manualmente. | — |
+| **zabbix_get** *(CLI)* | Herramienta para consultar datos de un agente (diagnóstico/pruebas). | — |
 
 
 Diagnostico:
