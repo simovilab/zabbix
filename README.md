@@ -129,5 +129,9 @@ Variable reutilizable cuyo valor depende del contexto.
 
 Ejemplo:
 
-```txt
-{$CPU.UTIL.MAX}
+
+
+Diagnostico:
+
+    zabbix_get -s 192.168.100.8 -p 10050 -k system.hostname
+
