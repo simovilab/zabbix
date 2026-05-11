@@ -156,8 +156,8 @@ services:
     restart: unless-stopped
     privileged: true
     group_add:
-      - "990"
-    # - "$DOCKER_GID"
+    #  - "990"
+     - "$DOCKER_GID"
     #    networks:
     #      net0:
     #        ipv4_address: ${ZBX_AGENT2_IP}
